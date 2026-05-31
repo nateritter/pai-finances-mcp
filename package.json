@@ -1,0 +1,26 @@
+{
+  "name": "pai-finances-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal MCP server exposing envelope-budget data to MCP clients. Single-user, Cloudflare-Workers-hosted.",
+  "type": "module",
+  "scripts": {
+    "dev": "bunx wrangler dev",
+    "deploy": "bunx wrangler deploy",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "test:live": "bun test test/scraper-source.live.test.ts"
+  },
+  "dependencies": {
+    "agents": "latest",
+    "@modelcontextprotocol/sdk": "latest",
+    "@cloudflare/workers-oauth-provider": "latest",
+    "hono": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "typescript": "latest",
+    "wrangler": "latest"
+  }
+}

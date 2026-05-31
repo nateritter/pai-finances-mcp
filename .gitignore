@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Wrangler / Workers local state
+.wrangler/
+dist/
+
+# Local secrets — NEVER commit these
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+
+# Logs / OS cruft
+*.log
+.DS_Store

@@ -1,0 +1,63 @@
+{
+  // Cloudflare Workers project manifest for the Finances MCP server.
+  // See: https://developers.cloudflare.com/workers/wrangler/configuration/
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // Worker name as it appears in the Cloudflare dashboard and in the
+  // *.workers.dev hostname (e.g. pai-finances-mcp.<account>.workers.dev).
+  "name": "pai-finances-mcp",
+
+  // REPLACE with your own Cloudflare account id. Find it at:
+  // dashboard.cloudflare.com -> Workers & Pages -> Account ID (right sidebar),
+  // or run `bunx wrangler whoami`. This is an account *identifier*, not a
+  // secret, but it is account-specific — yours will differ.
+  "account_id": "<YOUR_CLOUDFLARE_ACCOUNT_ID>",
+
+  // Entrypoint compiled by Wrangler. Exports the default `fetch` handler
+  // plus the FinanceMcpAgent Durable Object class.
+  "main": "src/index.ts",
+
+  // Pinning a compat date locks Workers runtime behavior so that future
+  // platform changes don't silently alter semantics for this Worker.
+  "compatibility_date": "2026-05-26",
+
+  // `nodejs_compat` lets us use a small subset of Node built-ins that the
+  // agents SDK and OAuth provider expect (Buffer, crypto helpers, etc.).
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Durable Objects host the per-session MCP agent state. Cloudflare's
+  // SQLite-backed DOs are on the free tier and are what McpAgent expects.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MCP_OBJECT",
+        "class_name": "FinanceMcpAgent"
+      }
+    ]
+  },
+
+  // First DO migration declares the class as a *new* SQLite-backed DO.
+  // Subsequent schema changes go in additional migration entries.
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["FinanceMcpAgent"]
+    }
+  ],
+
+  // KV namespace used by `@cloudflare/workers-oauth-provider` to persist
+  // OAuth client registrations, tokens, and PKCE state.
+  // REPLACE the id below with the one printed by:
+  //   bunx wrangler kv namespace create OAUTH_KV
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "<YOUR_OAUTH_KV_NAMESPACE_ID>"
+    }
+  ],
+
+  // Observability: cheap, always-on logs in the dashboard.
+  "observability": {
+    "enabled": true
+  }
+}

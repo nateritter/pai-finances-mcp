@@ -1,0 +1,21 @@
+# Local development secrets for `bunx wrangler dev`.
+#
+# Copy this file to `.dev.vars` (which is gitignored) and fill in real values.
+# In production these same names are set with `bunx wrangler secret put <NAME>`
+# and are NEVER committed.
+#
+#   cp .dev.vars.example .dev.vars
+#
+# --- GitHub OAuth App (required for auth) ---
+GITHUB_CLIENT_ID="your-github-oauth-app-client-id"
+GITHUB_CLIENT_SECRET="your-github-oauth-app-client-secret"
+
+# 32 random bytes of hex, used to encrypt the approval cookie.
+# Generate with: openssl rand -hex 32
+COOKIE_ENCRYPTION_KEY="generate-with-openssl-rand-hex-32"
+
+# --- Liquid Budget backend (optional) ---
+# Set BOTH to activate ScraperDataSource (real data). Leave unset to run the
+# in-memory CsvDataSource stub instead.
+LB_EMAIL="you@example.com"
+LB_PASSWORD="your-liquid-budget-password"
