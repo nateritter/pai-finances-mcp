@@ -378,15 +378,42 @@ export class ScraperDataSource implements DataSource {
 		return mapBucketsToEnvelopes(buckets, categoryMap);
 	}
 
+	/**
+	 * Accounts with LEDGER-DERIVED balances — Plaid is NOT used (severed 2026-06-15,
+	 * Nate's call: the Plaid connection is broken/stale). Fetches internal accounts +
+	 * the full transaction ledger, then sets each balance to the sum of that account's
+	 * transactions (incl. ADJUSTMENT + TRANSFER legs — both move real money). Liquid
+	 * Budget's reconcile (account.reconciledOn) trues-up the ledger, so this stays
+	 * accurate even when Plaid is down. NOTE: an account with no ledger transactions
+	 * resolves to 0. This is the interface method, so both MCP tools (list_accounts,
+	 * get_balance_summary via getBalanceSummary) are now Plaid-independent.
+	 */
 	async listAccounts(): Promise<Account[]> {
-		const budgetId = await this.ensureBudgetId();
-		const [accountsResp, externalResp] = await Promise.all([
-			this.authedGet(ENDPOINTS.accounts(budgetId)),
-			this.authedGet(ENDPOINTS.externalAccounts),
+		const [accounts, txs] = await Promise.all([
+			this.listAccountsNoBalances(),
+			this.listTransactions(),
 		]);
+		const ledger = new Map<string, number>();
+		for (const t of txs) {
+			ledger.set(t.account_id, (ledger.get(t.account_id) ?? 0) + t.amount_cents);
+		}
+		return accounts.map((a) => ({ ...a, balance_cents: ledger.get(a.id) ?? 0 }));
+	}
+
+	/**
+	 * Like listAccounts(), but WITHOUT the Plaid external-account balance join —
+	 * fetches ONLY the internal /api/account/budget endpoint, never
+	 * /api/external-account/account. Returns Account[] with balance_cents = 0;
+	 * callers derive real balances from the transaction ledger. This makes the
+	 * cron ingest fully Plaid-INDEPENDENT (Nate's call 2026-06-15). The "(manual)"
+	 * name suffix is still derived — from the internal object's externalAccountId
+	 * (present = Plaid-linked, absent = manual) — so no external fetch is needed.
+	 */
+	async listAccountsNoBalances(): Promise<Account[]> {
+		const budgetId = await this.ensureBudgetId();
+		const accountsResp = await this.authedGet(ENDPOINTS.accounts(budgetId));
 		const internalAccounts = unwrap(await accountsResp.json());
-		const externalAccounts = unwrap(await externalResp.json());
-		return mapAccountsWithBalances(internalAccounts, externalAccounts);
+		return mapInternalAccounts(internalAccounts);
 	}
 
 	async getBalanceSummary(): Promise<BalanceSummary> {
@@ -586,54 +613,40 @@ function mapBucketsToEnvelopes(
 		});
 }
 
+// mapAccountsWithBalances (the Plaid external-account join) was REMOVED 2026-06-15
+// when balances moved to ledger-derived everywhere — Plaid is no longer fetched by
+// this source. listAccounts() now builds on listAccountsNoBalances() + the ledger.
+
+/** Liquid Budget uppercase account enum → our lowercase union. */
+function toAccountType(raw: unknown): Account["type"] {
+	const t = String(raw ?? "CHECKING").toUpperCase();
+	return t === "SAVINGS"
+		? "savings"
+		: t === "CREDIT" || t === "CREDIT_CARD"
+			? "credit"
+			: t === "CASH"
+				? "cash"
+				: "checking";
+}
+
 /**
- * Map Liquid Budget accounts + Plaid external-accounts → our Account type.
- *
- * Internal accounts (from /api/account/budget/{id}) have the budget-side name
- * and an externalAccountId link. External accounts (from /api/external-account/account)
- * have the real Plaid-reported balance. Join via externalAccountId.
- *
- * Accounts without an external link (manual-entry accounts) get balance 0
- * with a name suffix flagging that.
- *
- * Account type mapping: Liquid Budget uppercase enum → our lowercase union.
+ * Map internal Liquid Budget accounts (/api/account/budget) → Account[] WITHOUT
+ * any Plaid balance — balance_cents is 0 (the caller derives real balances from
+ * the transaction ledger). The "(manual)" suffix is taken from the internal
+ * object's externalAccountId (present = Plaid-linked, absent = manual), so this
+ * never touches /api/external-account/account. Used by listAccountsNoBalances().
  */
-function mapAccountsWithBalances(
-	internal: unknown[],
-	external: unknown[],
-): Account[] {
-	const balanceById = new Map<string, { balance_cents: number; currency: string }>();
-	for (const e of external) {
-		const o = e as Record<string, unknown>;
-		if (typeof o.id !== "string") continue;
-		const balCents = typeof o.balanceV2 === "number"
-			? Math.round((o.balanceV2 as number) / 100)
-			: typeof o.balance === "number"
-				? Math.round((o.balance as number) * 100)
-				: 0;
-		balanceById.set(o.id, {
-			balance_cents: balCents,
-			currency: typeof o.currency === "string" ? o.currency : "USD",
-		});
-	}
+function mapInternalAccounts(internal: unknown[]): Account[] {
 	return internal.map((r) => {
 		const o = r as Record<string, unknown>;
 		const externalId = typeof o.externalAccountId === "string" ? o.externalAccountId : null;
-		const ext = externalId ? balanceById.get(externalId) : undefined;
-		const rawType = String(o.type ?? "CHECKING").toUpperCase();
-		const type: Account["type"] =
-			rawType === "CHECKING" ? "checking"
-			: rawType === "SAVINGS" ? "savings"
-			: rawType === "CREDIT" || rawType === "CREDIT_CARD" ? "credit"
-			: rawType === "CASH" ? "cash"
-			: "checking";
 		const name = String(o.name ?? "");
 		return {
 			id: String(o.id ?? ""),
-			name: ext ? name : `${name} (manual)`,
-			type,
-			balance_cents: ext?.balance_cents ?? 0,
-			currency: ext?.currency ?? "USD",
+			name: externalId ? name : `${name} (manual)`,
+			type: toAccountType(o.type),
+			balance_cents: 0,
+			currency: "USD",
 		};
 	});
 }
