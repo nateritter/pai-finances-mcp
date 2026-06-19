@@ -38,8 +38,7 @@ import type {
 //   POST /api/user/login                               — login (JWT response)
 //   GET  /api/budget/user                              — list this user's budgets
 //   GET  /api/bucket/budget/{budgetId}                 — envelopes (Liquid Budget calls them "buckets")
-//   GET  /api/account/budget/{budgetId}                — budget-side accounts (no balances; link to external via externalAccountId)
-//   GET  /api/external-account/account                 — Plaid-linked accounts WITH real balances
+//   GET  /api/account/budget/{budgetId}                — budget-side accounts (no balances; externalAccountId flags linked accounts)
 //   GET  /api/category/budget/{budgetId}               — envelope categories (Bills / Needs / Wants)
 //   GET  /api/recurring-transaction/budget/{budgetId}  — scheduled recurring transactions
 //   GET  /api/rule/budget/{budgetId}                   — auto-categorization rules
@@ -70,7 +69,6 @@ const ENDPOINTS = {
 	buckets: (budgetId: string) => `/api/bucket/budget/${budgetId}`,
 	accounts: (budgetId: string) => `/api/account/budget/${budgetId}`,
 	categories: (budgetId: string) => `/api/category/budget/${budgetId}`,
-	externalAccounts: "/api/external-account/account",
 	transactions: (budgetId: string) => `/api/account/transaction/budget/${budgetId}`,
 } as const;
 
@@ -379,14 +377,13 @@ export class ScraperDataSource implements DataSource {
 	}
 
 	/**
-	 * Accounts with LEDGER-DERIVED balances — Plaid is NOT used (severed 2026-06-15,
-	 * Nate's call: the Plaid connection is broken/stale). Fetches internal accounts +
-	 * the full transaction ledger, then sets each balance to the sum of that account's
+	 * Accounts with LEDGER-DERIVED balances. Fetches internal accounts + the full
+	 * transaction ledger, then sets each balance to the sum of that account's
 	 * transactions (incl. ADJUSTMENT + TRANSFER legs — both move real money). Liquid
-	 * Budget's reconcile (account.reconciledOn) trues-up the ledger, so this stays
-	 * accurate even when Plaid is down. NOTE: an account with no ledger transactions
-	 * resolves to 0. This is the interface method, so both MCP tools (list_accounts,
-	 * get_balance_summary via getBalanceSummary) are now Plaid-independent.
+	 * Budget's reconcile (account.reconciledOn) trues-up the ledger. NOTE: an account
+	 * with no ledger transactions resolves to 0. This is the interface method, so both
+	 * MCP tools (list_accounts, get_balance_summary via getBalanceSummary) read every
+	 * balance straight from the ledger.
 	 */
 	async listAccounts(): Promise<Account[]> {
 		const [accounts, txs] = await Promise.all([
@@ -401,13 +398,11 @@ export class ScraperDataSource implements DataSource {
 	}
 
 	/**
-	 * Like listAccounts(), but WITHOUT the Plaid external-account balance join —
-	 * fetches ONLY the internal /api/account/budget endpoint, never
-	 * /api/external-account/account. Returns Account[] with balance_cents = 0;
-	 * callers derive real balances from the transaction ledger. This makes the
-	 * cron ingest fully Plaid-INDEPENDENT (Nate's call 2026-06-15). The "(manual)"
-	 * name suffix is still derived — from the internal object's externalAccountId
-	 * (present = Plaid-linked, absent = manual) — so no external fetch is needed.
+	 * Like listAccounts(), but returns Account[] with balance_cents = 0 — fetches ONLY
+	 * the internal /api/account/budget endpoint; callers derive real balances from the
+	 * transaction ledger. The "(manual)" name suffix is derived from the internal
+	 * object's externalAccountId field (a flag Liquid Budget sets on linked accounts;
+	 * absent = manually-entered), read off the same internal response — no extra fetch.
 	 */
 	async listAccountsNoBalances(): Promise<Account[]> {
 		const budgetId = await this.ensureBudgetId();
@@ -613,9 +608,9 @@ function mapBucketsToEnvelopes(
 		});
 }
 
-// mapAccountsWithBalances (the Plaid external-account join) was REMOVED 2026-06-15
-// when balances moved to ledger-derived everywhere — Plaid is no longer fetched by
-// this source. listAccounts() now builds on listAccountsNoBalances() + the ledger.
+// The external-balance join was REMOVED 2026-06-15 when balances moved to
+// ledger-derived everywhere — no external-balance endpoint is fetched by this
+// source. listAccounts() now builds on listAccountsNoBalances() + the ledger.
 
 /** Liquid Budget uppercase account enum → our lowercase union. */
 function toAccountType(raw: unknown): Account["type"] {
@@ -630,11 +625,11 @@ function toAccountType(raw: unknown): Account["type"] {
 }
 
 /**
- * Map internal Liquid Budget accounts (/api/account/budget) → Account[] WITHOUT
- * any Plaid balance — balance_cents is 0 (the caller derives real balances from
- * the transaction ledger). The "(manual)" suffix is taken from the internal
- * object's externalAccountId (present = Plaid-linked, absent = manual), so this
- * never touches /api/external-account/account. Used by listAccountsNoBalances().
+ * Map internal Liquid Budget accounts (/api/account/budget) → Account[] with
+ * balance_cents = 0 (the caller derives real balances from the transaction ledger).
+ * The "(manual)" suffix is taken from the internal object's externalAccountId field
+ * (set on linked accounts; absent = manually-entered), read off the same internal
+ * response. Used by listAccountsNoBalances().
  */
 function mapInternalAccounts(internal: unknown[]): Account[] {
 	return internal.map((r) => {
