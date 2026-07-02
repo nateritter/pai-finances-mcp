@@ -60,7 +60,7 @@ app.get("/authorize", async (c) => {
 		server: {
 			description:
 				"Personal envelope-budget data over MCP. Single-user, locked to one GitHub login.",
-			logo: "https://github.githubassets.com/images/modules/logos_page/Octocat.png",
+			logo: "https://avatars.githubusercontent.com/u/9919?s=200&v=4",
 			name: "PAI Finances MCP",
 		},
 		setCookie,
