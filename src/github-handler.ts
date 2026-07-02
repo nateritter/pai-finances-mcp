@@ -23,6 +23,7 @@ import {
 	generateCSRFProtection,
 	isClientApproved,
 	OAuthError,
+	readCSRFCookie,
 	renderApprovalDialog,
 	validateCSRFToken,
 	validateOAuthState,
@@ -47,7 +48,11 @@ app.get("/authorize", async (c) => {
 		});
 	}
 
-	const { token: csrfToken, setCookie } = generateCSRFProtection();
+	// Reuse any CSRF token already in this browser's __Host-CSRF_TOKEN cookie so that
+	// a repeated render (CLI auto-open + manual paste, reload, prefetch) keeps the
+	// same token instead of overwriting the cookie and desyncing it from an older
+	// on-screen form (the "CSRF token mismatch" bug).
+	const { token: csrfToken, setCookie } = generateCSRFProtection(readCSRFCookie(c.req.raw));
 
 	return renderApprovalDialog(c.req.raw, {
 		client: await c.env.OAUTH_PROVIDER.lookupClient(clientId),
