@@ -193,15 +193,50 @@ export function sanitizeUrl(url: string): string {
 	return normalized;
 }
 
+const CSRF_COOKIE_NAME = "__Host-CSRF_TOKEN";
+
 /**
- * Generates a new CSRF token and corresponding cookie for form protection
+ * Shape of a `crypto.randomUUID()` value, anchored so no injected value can slip
+ * through the reuse check and be reflected into the approval form.
+ */
+const CSRF_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Reads the `__Host-CSRF_TOKEN` value from a request's Cookie header.
+ * @param request - The HTTP request whose cookies to inspect
+ * @returns The cookie value, or null when absent or blank
+ */
+export function readCSRFCookie(request: Request): string | null {
+	const cookieHeader = request.headers.get("Cookie") || "";
+	const cookies = cookieHeader.split(";").map((c) => c.trim());
+	const csrfCookie = cookies.find((c) => c.startsWith(`${CSRF_COOKIE_NAME}=`));
+	if (!csrfCookie) return null;
+	const value = csrfCookie.substring(CSRF_COOKIE_NAME.length + 1);
+	return value.length > 0 ? value : null;
+}
+
+/**
+ * Generates (or reuses) a CSRF token and corresponding cookie for form protection.
+ *
+ * The approval form and the `__Host-CSRF_TOKEN` cookie are compared for equality on
+ * POST (double-submit). Because the cookie is browser-global (`Path=/`), minting a
+ * fresh token on EVERY `GET /authorize` render used to desync it: a second render
+ * (the CLI auto-opening the URL while the user also pastes it, a reload, a prefetch)
+ * overwrote the cookie while an older form stayed on screen, so submitting that form
+ * produced "CSRF token mismatch". Reusing a valid existing token keeps the token
+ * STABLE across renders so cookie and form can't desync, while preserving the
+ * double-submit guarantee (an attacker still cannot read the victim's __Host- cookie).
+ *
+ * @param existingToken - The token already in the browser's cookie, if any. Reused
+ *   only when it matches our own token format; otherwise a fresh token is minted.
  * @returns Object containing the token and Set-Cookie header value
  */
-export function generateCSRFProtection(): CSRFProtectionResult {
-	const csrfCookieName = "__Host-CSRF_TOKEN";
-
-	const token = crypto.randomUUID();
-	const setCookie = `${csrfCookieName}=${token}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`;
+export function generateCSRFProtection(existingToken?: string | null): CSRFProtectionResult {
+	const token =
+		existingToken && CSRF_TOKEN_RE.test(existingToken) ? existingToken : crypto.randomUUID();
+	// Always (re)set the cookie so its presence and sliding 10-minute expiry are
+	// guaranteed on every render — warm (reused token) or cold (fresh token).
+	const setCookie = `${CSRF_COOKIE_NAME}=${token}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`;
 	return { token, setCookie };
 }
 
@@ -762,7 +797,7 @@ export function renderApprovalDialog(request: Request, options: ApprovalDialogOp
 
             <form method="post" action="${new URL(request.url).pathname}">
               <input type="hidden" name="state" value="${encodedState}">
-              <input type="hidden" name="csrf_token" value="${csrfToken}">
+              <input type="hidden" name="csrf_token" value="${sanitizeText(csrfToken)}">
 
               <div class="actions">
                 <button type="button" class="button button-secondary" onclick="window.history.back()">Cancel</button>
