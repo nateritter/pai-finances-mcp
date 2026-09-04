@@ -224,4 +224,11 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "/register",
   defaultHandler: GitHubHandler as any,
   tokenEndpoint: "/token",
+  // Single-user, GitHub-allowlisted server: long-lived tokens so Claude Code
+  // rarely has to refresh. Short access tokens (lib default 1h) + refresh-token
+  // rotation with a 1-generation grace window collide across concurrent
+  // sessions/profiles and force a full re-auth every login. Long TTLs stop the
+  // refresh churn entirely.
+  accessTokenTTL: 60 * 60 * 24 * 30, // 30 days (lib default: 1 hour)
+  refreshTokenTTL: 60 * 60 * 24 * 365, // 1 year (lib default: 30 days)
 });
