@@ -43,9 +43,9 @@ app.get("/authorize", async (c) => {
 	if (await isClientApproved(c.req.raw, clientId, c.env.COOKIE_ENCRYPTION_KEY)) {
 		const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV);
 		const { setCookie: sessionBindingCookie } = await bindStateToSession(stateToken);
-		return redirectToGithub(c.req.raw, c.env.GITHUB_CLIENT_ID, stateToken, {
-			"Set-Cookie": sessionBindingCookie,
-		});
+		return redirectToGithub(c.req.raw, c.env.GITHUB_CLIENT_ID, stateToken, [
+			sessionBindingCookie,
+		]);
 	}
 
 	// Reuse any CSRF token already in this browser's __Host-CSRF_TOKEN cookie so that
@@ -71,7 +71,10 @@ app.get("/authorize", async (c) => {
 app.post("/authorize", async (c) => {
 	try {
 		const formData = await c.req.raw.formData();
-		validateCSRFToken(formData, c.req.raw);
+		// RFC 9700: the CSRF token is one-time use — validateCSRFToken returns a
+		// Set-Cookie value that clears __Host-CSRF_TOKEN, which we MUST send on the
+		// response so the token can't be replayed within its 600s Max-Age window.
+		const { clearCookie: clearCsrfCookie } = validateCSRFToken(formData, c.req.raw);
 
 		const encodedState = formData.get("state");
 		if (!encodedState || typeof encodedState !== "string") {
@@ -98,16 +101,14 @@ app.post("/authorize", async (c) => {
 		const { stateToken } = await createOAuthState(state.oauthReqInfo, c.env.OAUTH_KV);
 		const { setCookie: sessionBindingCookie } = await bindStateToSession(stateToken);
 
-		const headers = new Headers();
-		headers.append("Set-Cookie", approvedClientCookie);
-		headers.append("Set-Cookie", sessionBindingCookie);
-
-		return redirectToGithub(
-			c.req.raw,
-			c.env.GITHUB_CLIENT_ID,
-			stateToken,
-			Object.fromEntries(headers),
-		);
+		// Pass Set-Cookie values as an explicit array so each survives as its own
+		// header. Object.fromEntries(headers) would collapse duplicate Set-Cookie
+		// names into a single comma-joined value that browsers mis-parse.
+		return redirectToGithub(c.req.raw, c.env.GITHUB_CLIENT_ID, stateToken, [
+			approvedClientCookie,
+			sessionBindingCookie,
+			clearCsrfCookie,
+		]);
 	} catch (error: any) {
 		console.error("POST /authorize error:", error);
 		if (error instanceof OAuthError) {
@@ -117,25 +118,27 @@ app.post("/authorize", async (c) => {
 	}
 });
 
-async function redirectToGithub(
+export async function redirectToGithub(
 	request: Request,
 	githubClientId: string,
 	stateToken: string,
-	headers: Record<string, string> = {},
+	setCookies: string[] = [],
 ) {
-	return new Response(null, {
-		headers: {
-			...headers,
-			location: getUpstreamAuthorizeUrl({
-				client_id: githubClientId,
-				redirect_uri: new URL("/callback", request.url).href,
-				scope: "read:user",
-				state: stateToken,
-				upstream_url: "https://github.com/login/oauth/authorize",
-			}),
-		},
-		status: 302,
+	const headers = new Headers({
+		location: getUpstreamAuthorizeUrl({
+			client_id: githubClientId,
+			redirect_uri: new URL("/callback", request.url).href,
+			scope: "read:user",
+			state: stateToken,
+			upstream_url: "https://github.com/login/oauth/authorize",
+		}),
 	});
+	// Append each Set-Cookie individually — multiple Set-Cookie headers must stay
+	// distinct (never comma-joined) for the browser to accept all of them.
+	for (const cookie of setCookies) {
+		headers.append("Set-Cookie", cookie);
+	}
+	return new Response(null, { headers, status: 302 });
 }
 
 /**

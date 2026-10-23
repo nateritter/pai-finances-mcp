@@ -37,7 +37,9 @@ function makeAuthedSource(): ScraperDataSource {
 	return source;
 }
 
-describe("ScraperDataSource — live Liquid Budget API", () => {
+// Without LB_TEST_JWT the whole live suite is skipped (not failed), so a plain
+// `bun test` with no credentials stays green.
+describe.skipIf(!JWT)("ScraperDataSource — live Liquid Budget API", () => {
 	let source: ScraperDataSource;
 
 	beforeAll(() => {

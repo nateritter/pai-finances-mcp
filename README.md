@@ -130,7 +130,7 @@ Point your client at the `/mcp` URL. Example for Claude Desktop
 {
   "mcpServers": {
     "pai-finances": {
-      "command": "npx",
+      "command": "bunx",
       "args": ["mcp-remote", "https://pai-finances-mcp.<your-subdomain>.workers.dev/mcp"]
     }
   }

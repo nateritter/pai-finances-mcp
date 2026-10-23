@@ -16,9 +16,10 @@
  * of the Durable Object instance. On 401 from /api/*, the session is
  * invalidated and one re-login retry runs.
  *
- * Credentials are env-only — never hardcoded, never logged. MFA is sent via
- * the `mfaCode` body field; if `LB_TOTP_CODE` is supplied as a Worker secret,
- * it's passed through (single-shot — TOTP rotation not implemented yet).
+ * Credentials are env-only — never hardcoded, never logged. MFA/TOTP is NOT
+ * supported: the login body always sends an empty `mfaCode`, and the Worker
+ * does not read any TOTP secret. An account with MFA enabled fails at login
+ * with a clear error (see login()).
  *
  * ToS: personal use against the user's own account. No probing of other
  * users' data. No aggressive request rates.
@@ -228,9 +229,9 @@ export class ScraperDataSource implements DataSource {
 				loginResp.status === 428
 			) {
 				throw new Error(
-					"Liquid Budget MFA required. Set LB_TOTP_CODE secret to the " +
-						"current 6-digit TOTP code (single-shot — full TOTP rotation " +
-						"not yet implemented). Response excerpt: " + body,
+					"Liquid Budget MFA required, but MFA/TOTP is not supported by " +
+						"this server. Disable MFA on the Liquid Budget account to use " +
+						"the scraper backend. Response excerpt: " + body,
 				);
 			}
 			throw new Error(
